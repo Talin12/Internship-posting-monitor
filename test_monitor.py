@@ -201,5 +201,66 @@ class TestMatcher(unittest.TestCase):
         self.assertEqual(m.score_batch("r", []), [])
 
 
+class TestErrorAlerts(unittest.TestCase):
+    class _Cap:
+        name = "cap"
+        def __init__(self, ok=True):
+            self.ok = ok
+            self.sent = []
+        def send(self, msgs):
+            self.sent.extend(msgs)
+            return self.ok
+
+    def test_error_code_extracts_status(self):
+        import main
+        self.assertEqual(main._error_code("429 Client Error: Too Many Requests"), "429")
+        self.assertEqual(main._error_code("404 Not Found for url x"), "404")
+        self.assertEqual(main._error_code("ConnectionError: DNS fail"), "ConnectionError")
+
+    def test_signature_stable_and_sorted(self):
+        import main
+        a = main._error_signature([("B", "500 x"), ("A", "429 y")])
+        b = main._error_signature([("A", "429 z"), ("B", "500 w")])
+        self.assertEqual(a, b)  # order-independent, url-detail-independent
+        self.assertEqual(a, "A:429;B:500")
+        self.assertEqual(main._error_signature([]), "")
+
+    def test_alert_dedups_and_recovers(self):
+        import main
+        st = state_mod.State()
+        cap = self._Cap()
+        # first failure -> alert
+        main.alert_fetch_errors(st, [("Acme", "429 rate limited")], cap)
+        self.assertEqual(len(cap.sent), 1)
+        self.assertIn("couldn't fetch", cap.sent[0])
+        # same failure -> no new alert
+        main.alert_fetch_errors(st, [("Acme", "429 again")], cap)
+        self.assertEqual(len(cap.sent), 1)
+        # recovery -> one more alert
+        main.alert_fetch_errors(st, [], cap)
+        self.assertEqual(len(cap.sent), 2)
+        self.assertIn("normally again", cap.sent[1])
+        # still healthy -> no alert
+        main.alert_fetch_errors(st, [], cap)
+        self.assertEqual(len(cap.sent), 2)
+
+    def test_failed_alert_not_recorded(self):
+        import main
+        st = state_mod.State()
+        cap = self._Cap(ok=False)  # delivery fails
+        main.alert_fetch_errors(st, [("Acme", "500 err")], cap)
+        # last_error unchanged, so it retries next run
+        self.assertIn(st.last_error, (None, ""))
+
+    def test_last_error_roundtrips(self):
+        import tempfile, os
+        s = state_mod.State()
+        s.last_error = "Acme:429"
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "seen.json")
+            state_mod.save(s, path)
+            self.assertEqual(state_mod.load(path).last_error, "Acme:429")
+
+
 if __name__ == "__main__":
     unittest.main()

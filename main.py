@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import re
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -40,15 +41,16 @@ def load_config(path: str = CONFIG_PATH) -> dict:
         return yaml.safe_load(fh) or {}
 
 
-def fetch_all(companies: list[dict]) -> tuple[list[Posting], list[str]]:
+def fetch_all(companies: list[dict]) -> tuple[list[Posting], list[tuple[str, str]]]:
     """Fetch companies concurrently.
 
-    Returns (postings, failed_company_names). Only postings from companies that
-    fetched successfully are returned; failures are collected so main() can avoid
-    treating a fetch error as "no postings".
+    Returns (postings, failures) where failures is a list of (company, reason).
+    Only postings from companies that fetched successfully are returned; failures
+    are collected so main() can avoid treating a fetch error as "no postings" and
+    can alert about them.
     """
     postings: list[Posting] = []
-    failed: list[str] = []
+    failed: list[tuple[str, str]] = []
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
         futures = {
             pool.submit(
@@ -63,7 +65,8 @@ def fetch_all(companies: list[dict]) -> tuple[list[Posting], list[str]]:
                 postings.extend(result)
                 log.info("fetched %s: %d postings", name, len(result))
             except Exception as exc:  # noqa: BLE001
-                failed.append(name)
+                reason = str(exc).strip() or type(exc).__name__
+                failed.append((name, reason[:140]))
                 log.error("FETCH FAILED for %s: %s", name, exc)
     return postings, failed
 
@@ -75,6 +78,59 @@ def select_companies(config: dict, only: str | None) -> list[dict]:
         if not companies:
             log.error("no company named %r in config", only)
     return companies
+
+
+_STATUS_RE = re.compile(r"\b([1-5]\d\d)\b")
+
+
+def _error_code(reason: str) -> str:
+    """Coarse, stable label for a failure reason (HTTP status if present).
+
+    Used to dedupe alerts: a transient 404 that repeats every run should keep the
+    same signature, but a 404 turning into a 429 (or a timeout) should re-alert.
+    """
+    m = _STATUS_RE.search(reason)
+    if m:
+        return m.group(1)
+    return reason.split(":", 1)[0].strip()[:30] or "error"
+
+
+def _error_signature(failures: list[tuple[str, str]]) -> str:
+    """Stable signature of this run's failures; '' when everything fetched."""
+    return ";".join(f"{name}:{_error_code(reason)}" for name, reason in sorted(failures))
+
+
+def _format_failures(failures: list[tuple[str, str]]) -> str:
+    lines = [f"• {name} — {reason}" for name, reason in sorted(failures)]
+    n = len(failures)
+    return (
+        f"⚠️ Job monitor: couldn't fetch {n} source{'s' if n != 1 else ''} this run:\n"
+        + "\n".join(lines)
+        + "\n\nThose were skipped; their postings will be retried next run. "
+        "If this keeps repeating, check the token/config for that company."
+    )
+
+
+def alert_fetch_errors(st, failures: list[tuple[str, str]], notifier) -> None:
+    """Notify about fetch failures, de-duplicated against the last run.
+
+    Alerts once when a distinct problem appears and once when it clears, rather
+    than every 30 minutes for a persistent issue. `st.last_error` is only updated
+    after the alert is actually delivered, so a failed alert retries next run.
+    """
+    signature = _error_signature(failures)
+    if signature == (st.last_error or ""):
+        return  # unchanged since last run — already alerted (or still healthy)
+
+    if failures:
+        message = _format_failures(failures)
+    else:
+        message = "✅ Job monitor: all sources are fetching normally again."
+
+    if notifier.send([message]):
+        st.last_error = signature  # persisted by the caller's save()
+    else:
+        log.error("could not deliver fetch-error alert; will retry next run")
 
 
 def run(args: argparse.Namespace) -> int:
@@ -134,6 +190,14 @@ def run(args: argparse.Namespace) -> int:
         print(f"[INIT] seeded state with {added} current postings; no notifications sent.")
         return 0
 
+    # Build the notifier once; reused for error alerts and posting notices.
+    notifier = notify.build_notifier()
+
+    # Alert (de-duplicated) about any companies that failed to fetch this run —
+    # e.g. a 429 rate-limit or a bad token. Runs even when there are no new
+    # postings, so a broken source never fails silently.
+    alert_fetch_errors(st, failed, notifier)
+
     new = st.new_ids(matched)
     log.info("%d new postings after diffing against seen state", len(new))
 
@@ -184,7 +248,6 @@ def run(args: argparse.Namespace) -> int:
             )
 
     # Notify first; only record notified ids if the send fully succeeded.
-    notifier = notify.build_notifier()
     messages = notify.build_messages(to_notify, annotations)
     sent = notifier.send(messages) if to_notify else True
 
@@ -234,7 +297,21 @@ def main(argv: list[str] | None = None) -> int:
     if args.init and args.dry_run:
         log.error("--init and --dry-run are mutually exclusive")
         return 2
-    return run(args)
+
+    try:
+        return run(args)
+    except Exception as exc:  # noqa: BLE001 - last-resort: surface the crash, don't swallow it
+        log.exception("run crashed")
+        # Best-effort crash alert to Telegram (or stdout). Never let an alert
+        # failure mask the original error.
+        try:
+            notify.load_dotenv()
+            notify.build_notifier().send(
+                [f"🚨 Job monitor crashed: {type(exc).__name__}: {exc}"]
+            )
+        except Exception:  # noqa: BLE001
+            log.exception("could not deliver crash alert")
+        return 1
 
 
 if __name__ == "__main__":

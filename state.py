@@ -30,6 +30,9 @@ MAX_IDS = 20_000
 class State:
     ids: list[str] = field(default_factory=list)
     last_run: str | None = None
+    # Signature of the last run's fetch errors, so we alert once per distinct
+    # problem (and once on recovery) instead of every run. None/"" = healthy.
+    last_error: str | None = None
     # A set kept in sync with `ids` for O(1) membership tests.
     _id_set: set[str] = field(default_factory=set, repr=False)
 
@@ -78,12 +81,20 @@ def load(path: str = DEFAULT_PATH) -> State:
     ids = data.get("ids", [])
     if not isinstance(ids, list):
         ids = []
-    return State(ids=list(ids), last_run=data.get("last_run"))
+    return State(
+        ids=list(ids),
+        last_run=data.get("last_run"),
+        last_error=data.get("last_error"),
+    )
 
 
 def save(state: State, path: str = DEFAULT_PATH) -> None:
     """Atomically write state to `path` (temp file + rename)."""
-    payload = {"ids": state.ids, "last_run": state.last_run}
+    payload = {
+        "ids": state.ids,
+        "last_run": state.last_run,
+        "last_error": state.last_error,
+    }
     directory = os.path.dirname(os.path.abspath(path))
     fd, tmp = tempfile.mkstemp(prefix=".seen-", suffix=".tmp", dir=directory)
     try:

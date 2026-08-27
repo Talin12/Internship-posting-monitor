@@ -254,6 +254,23 @@ Setup:
 
 ---
 
+## Error alerts
+
+Failures are surfaced to Telegram (or stdout), so the monitor never breaks
+silently:
+
+- **A company failing to fetch** (rate-limit `429`, bad token, timeout, ...) —
+  that source is skipped and retried next run, and you get a `⚠️` alert naming
+  the company and reason. Alerts are **de-duplicated**: a persistent problem
+  pings you *once*, and again with a `✅` when it clears — not every 30 minutes.
+- **An unexpected crash** — a `🚨` alert with the error, and the GitHub Actions
+  run is marked failed (exit 1).
+
+The last error signature is stored in `seen.json` (`last_error`) to drive the
+de-duplication.
+
+---
+
 ## Extending
 
 - **New notification channel** (email, Discord): add a class implementing the
