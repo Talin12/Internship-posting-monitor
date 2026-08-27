@@ -23,6 +23,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import yaml
 
+import matcher as matcher_mod
 import notify
 import state as state_mod
 from filters import Filters, apply_filters
@@ -77,6 +78,9 @@ def select_companies(config: dict, only: str | None) -> list[dict]:
 
 
 def run(args: argparse.Namespace) -> int:
+    # Load .env once up front so HF_API_TOKEN / RESUME_TEXT / Telegram vars are
+    # all available to matching and notification alike.
+    notify.load_dotenv()
     config = load_config()
     filters = Filters.from_config(config.get("filters", {}))
     companies = select_companies(config, args.company)
@@ -88,12 +92,36 @@ def run(args: argparse.Namespace) -> int:
     log.info("%d postings fetched, %d match filters", len(postings), len(matched))
 
     # --dry-run: fetch, filter, print, touch nothing (no state, no notify).
+    # If resume matching is configured, score here too (embeddings are free) so
+    # you can eyeball the spread and pick a threshold. State is still untouched.
     if args.dry_run:
+        resume = matcher_mod.load_resume()
+        mtchr = matcher_mod.build_matcher(config, resume)
+        scores: dict[str, float] = {}
+        if mtchr:
+            to_score = sorted(matched, key=lambda x: (x.company, x.title))[
+                : matcher_mod.max_to_score(config)
+            ]
+            try:
+                for r in mtchr.score_batch(resume, to_score):
+                    scores[r.posting_id] = r.score
+                print(f"\n[DRY RUN] scored {len(scores)} postings against your resume "
+                      f"(threshold {mtchr.threshold:.2f}); ✓ = would notify:")
+            except Exception as exc:  # noqa: BLE001
+                log.error("scoring failed in dry-run: %s", exc)
+
         print(f"\n[DRY RUN] {len(matched)} postings match filters "
               f"({len(failed)} companies failed to fetch):")
-        for p in sorted(matched, key=lambda x: (x.company, x.title)):
+        ordered = sorted(
+            matched, key=lambda x: (-scores.get(x.id, -1), x.company, x.title)
+        )
+        for p in ordered:
             loc = f" — {p.location}" if p.location else ""
-            print(f"  • {p.company}: {p.title}{loc}\n    {p.url}")
+            tag = ""
+            if p.id in scores:
+                mark = "✓" if mtchr and scores[p.id] >= mtchr.threshold else " "
+                tag = f"[{scores[p.id]:.2f} {mark}] "
+            print(f"  {tag}• {p.company}: {p.title}{loc}\n      {p.url}")
         return 0
 
     st = state_mod.load()
@@ -115,22 +143,73 @@ def run(args: argparse.Namespace) -> int:
         print("No new postings.")
         return 0
 
-    # Notify first; only record ids as seen if the send fully succeeded.
+    # Resume matching (optional). Score the new postings; keep the relevant ones
+    # to notify, and remember the rejected ones so we never re-score them. If
+    # matching is off/unavailable, notify about all new postings.
+    resume = matcher_mod.load_resume()
+    mtchr = matcher_mod.build_matcher(config, resume)
+    annotations: dict[str, str] = {}
+    rejected_ids: list[str] = []          # scored below threshold -> mark seen
+    to_notify = new
+
+    if mtchr:
+        cap = matcher_mod.max_to_score(config)
+        # Score at most `cap` per run; any beyond the cap stay unseen (to_notify
+        # already covers them via the fallback below) and are scored next run.
+        batch = new[:cap]
+        try:
+            results = mtchr.score_batch(resume, batch)
+        except Exception as exc:  # noqa: BLE001
+            # Scoring failed (bad token, cold model, rate limit, ...). Degrade to
+            # keyword-only: notify about all new postings rather than going silent.
+            # A persistent HF misconfig then shows up as loud logs + unscored
+            # notifications, never as total silence.
+            log.error("resume scoring failed (%s); falling back to notify-all", exc)
+            print("Resume scoring FAILED; notifying all new (keyword-only) this run.")
+            to_notify = new
+        else:
+            by_id = {p.id: p for p in batch}
+            scored_beyond_cap = new[cap:]  # not scored this run -> notify unscored
+            to_notify = list(scored_beyond_cap)
+            for r in results:
+                if r.matched:
+                    to_notify.append(by_id[r.posting_id])
+                    annotations[r.posting_id] = r.detail
+                else:
+                    rejected_ids.append(r.posting_id)
+            log.info(
+                "scored %d new via %s: %d matched, %d below threshold, %d beyond cap",
+                len(results), mtchr.name, len(to_notify) - len(scored_beyond_cap),
+                len(rejected_ids), len(scored_beyond_cap),
+            )
+
+    # Notify first; only record notified ids if the send fully succeeded.
     notifier = notify.build_notifier()
-    messages = notify.build_messages(new)
-    sent = notifier.send(messages)
+    messages = notify.build_messages(to_notify, annotations)
+    sent = notifier.send(messages) if to_notify else True
+
+    # Rejected-after-scoring ids are recorded regardless of the send — they were
+    # never going to be notified, and we don't want to pay to re-score them.
+    st.add(rejected_ids)
 
     if sent:
-        added = st.add([p.id for p in new])
+        added = st.add([p.id for p in to_notify])
         st.touch()
         state_mod.save(st)
-        log.info("notified via %s and recorded %d new ids", notifier.name, added)
-        print(f"Notified {len(new)} new posting(s) via {notifier.name}.")
+        if to_notify:
+            log.info("notified via %s and recorded %d new ids", notifier.name, added)
+            print(f"Notified {len(to_notify)} matching posting(s) via {notifier.name}.")
+        else:
+            print(f"No postings matched your resume ({len(rejected_ids)} scored, none "
+                  f"above threshold).")
         return 0
     else:
-        # Do NOT record ids — we want to retry these on the next run.
-        log.error("notification failed; state left unchanged so postings retry next run")
-        print("Notification FAILED; state unchanged (will retry next run).")
+        # Notification failed: don't record the to-notify ids (retry next run).
+        # Rejected ids were already added above and will still be saved.
+        st.touch()
+        state_mod.save(st)
+        log.error("notification failed; matched postings will retry next run")
+        print("Notification FAILED; matched postings unchanged (will retry next run).")
         return 1
 
 

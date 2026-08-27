@@ -1,9 +1,17 @@
 # Secrets — never commit
 .env
 
+# Resume — private; the repo is public. Kept out of git.
+# Local text lives in resume.txt; CI reads the RESUME_TEXT secret.
+resume.txt
+*.pdf
+
 # Local virtualenv
 .venv/
 
 # Python caches
 __pycache__/
 *.pyc
+
+# macOS
+.DS_Store

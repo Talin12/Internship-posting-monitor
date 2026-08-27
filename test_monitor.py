@@ -134,5 +134,72 @@ class TestMessages(unittest.TestCase):
         self.assertEqual(notify.build_messages([]), [])
 
 
+class TestMatcher(unittest.TestCase):
+    def _posting(self, pid, title="Intern", desc="Python Django backend"):
+        return Posting(pid, "Acme", title, "NYC", "http://x", None, "greenhouse", desc)
+
+    def test_build_matcher_disabled(self):
+        import matcher
+        self.assertIsNone(matcher.build_matcher({"matching": {"enabled": False}}, "r"))
+
+    def test_build_matcher_no_resume(self):
+        import matcher
+        cfg = {"matching": {"enabled": True}}
+        self.assertIsNone(matcher.build_matcher(cfg, None))
+
+    def test_build_matcher_no_token(self):
+        import matcher
+        os.environ.pop("HF_API_TOKEN", None)
+        cfg = {"matching": {"enabled": True, "provider": "huggingface"}}
+        self.assertIsNone(matcher.build_matcher(cfg, "resume text"))
+
+    def test_build_matcher_unknown_provider(self):
+        import matcher
+        os.environ["HF_API_TOKEN"] = "hf_x"
+        try:
+            cfg = {"matching": {"enabled": True, "provider": "openai"}}
+            self.assertIsNone(matcher.build_matcher(cfg, "resume"))
+        finally:
+            os.environ.pop("HF_API_TOKEN", None)
+
+    def test_threshold_gate_and_clamp(self):
+        import matcher
+        m = matcher.HuggingFaceMatcher(token="hf_x", threshold=0.3)
+        m._similarities = lambda src, sents: [0.55, 0.10, -0.2, 1.4][: len(sents)]
+        posts = [self._posting(f"id{i}") for i in range(4)]
+        res = m.score_batch("resume", posts)
+        self.assertEqual([r.matched for r in res], [True, False, False, True])
+        self.assertEqual(res[2].score, 0.0)   # clamped up from -0.2
+        self.assertEqual(res[3].score, 1.0)   # clamped down from 1.4
+
+    def test_bad_response_shape_raises(self):
+        import matcher, requests
+        m = matcher.HuggingFaceMatcher(token="hf_x")
+
+        class FakeResp:
+            status_code = 200
+            def raise_for_status(self): pass
+            def json(self): return [0.5]  # wrong length (2 sentences expected)
+
+        orig = requests.post
+        requests.post = lambda *a, **k: FakeResp()
+        try:
+            with self.assertRaises(Exception):
+                m.score_batch("r", [self._posting("a"), self._posting("b")])
+        finally:
+            requests.post = orig
+
+    def test_posting_text_includes_title_and_desc(self):
+        import matcher
+        t = matcher.posting_text(self._posting("id", title="SWE Intern", desc="Django REST"))
+        self.assertIn("SWE Intern", t)
+        self.assertIn("Django REST", t)
+
+    def test_empty_batch(self):
+        import matcher
+        m = matcher.HuggingFaceMatcher(token="hf_x")
+        self.assertEqual(m.score_batch("r", []), [])
+
+
 if __name__ == "__main__":
     unittest.main()

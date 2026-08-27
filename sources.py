@@ -13,7 +13,9 @@ Supported platforms:
 
 from __future__ import annotations
 
+import html
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable, Optional
@@ -43,6 +45,10 @@ class Posting:
     url: str
     posted_at: Optional[datetime]
     source: str  # platform name: greenhouse | lever | ashby
+    # Plain-text job description, used by the resume matcher. Truncated to keep
+    # embedding payloads small; empty when the ATS returned no body. Defaulted so
+    # existing constructors (and tests) don't need to pass it.
+    description: str = ""
 
 
 # --------------------------------------------------------------------------- #
@@ -97,6 +103,27 @@ def _parse_epoch_ms(value) -> Optional[datetime]:
         return None
 
 
+_TAG_RE = re.compile(r"<[^>]+>")
+_WS_RE = re.compile(r"\s+")
+DESCRIPTION_MAX_CHARS = 2000  # plenty for embedding; keeps payloads small
+
+
+def _clean_html(raw: Optional[str]) -> str:
+    """Turn an HTML (or entity-encoded HTML) job body into compact plain text.
+
+    Greenhouse double-encodes (`&lt;p&gt;`), Ashby returns real HTML, Lever gives
+    plain text — unescaping then stripping tags handles all three. Truncated to
+    DESCRIPTION_MAX_CHARS so we never embed a novel.
+    """
+    if not raw:
+        return ""
+    text = html.unescape(raw)
+    text = _TAG_RE.sub(" ", text)
+    text = html.unescape(text)  # second pass for the &lt;-encoded case
+    text = _WS_RE.sub(" ", text).strip()
+    return text[:DESCRIPTION_MAX_CHARS]
+
+
 # --------------------------------------------------------------------------- #
 # Per-platform fetchers
 # --------------------------------------------------------------------------- #
@@ -121,6 +148,7 @@ def fetch_greenhouse(company: str, token: str) -> list[Posting]:
                 url=job.get("absolute_url") or "",
                 posted_at=posted_at,
                 source="greenhouse",
+                description=_clean_html(job.get("content")),
             )
         )
     return postings
@@ -148,6 +176,11 @@ def fetch_lever(company: str, token: str) -> list[Posting]:
                 url=job.get("hostedUrl") or job.get("applyUrl") or "",
                 posted_at=_parse_epoch_ms(job.get("createdAt")),
                 source="lever",
+                # Lever gives plain text in descriptionPlain; fall back to HTML.
+                description=(
+                    (job.get("descriptionPlain") or "").strip()[:DESCRIPTION_MAX_CHARS]
+                    or _clean_html(job.get("description"))
+                ),
             )
         )
     return postings
@@ -179,6 +212,7 @@ def fetch_ashby(company: str, token: str) -> list[Posting]:
                 url=job.get("jobUrl") or job.get("applyUrl") or "",
                 posted_at=_parse_iso(job.get("publishedAt")),
                 source="ashby",
+                description=_clean_html(job.get("descriptionHtml")),
             )
         )
     return postings

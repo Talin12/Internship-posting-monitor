@@ -35,6 +35,10 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          # Resume matching (optional). If either secret is unset, the monitor
+          # falls back to notifying about every new posting.
+          HF_API_TOKEN: ${{ secrets.HF_API_TOKEN }}
+          RESUME_TEXT: ${{ secrets.RESUME_TEXT }}
         run: python main.py
 
       - name: Commit updated state

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Iterable, Protocol
+from typing import Iterable, Optional, Protocol
 
 import requests
 
@@ -32,17 +32,23 @@ REQUEST_TIMEOUT = 15
 # --------------------------------------------------------------------------- #
 # Message construction
 # --------------------------------------------------------------------------- #
-def _format_posting(p) -> str:
+def _format_posting(p, annotations: Optional[dict] = None) -> str:
     loc = f" — {p.location}" if p.location else ""
-    return f"• {p.company}: {p.title}{loc}\n  {p.url}"
+    note = ""
+    if annotations and p.id in annotations:
+        note = f"\n  ({annotations[p.id]})"
+    return f"• {p.company}: {p.title}{loc}{note}\n  {p.url}"
 
 
-def build_messages(postings: list) -> list[str]:
+def build_messages(postings: list, annotations: Optional[dict] = None) -> list[str]:
     """Turn new postings into one or more message strings.
 
     - 0 postings          -> [] (caller should not send)
     - > SUMMARY_THRESHOLD -> a single summary line (first run / ATS change, not news)
     - otherwise           -> a header + one bullet per posting, split at TELEGRAM_LIMIT
+
+    `annotations` optionally maps posting.id -> a short string (e.g. the resume
+    relevance score) appended under each bullet.
     """
     n = len(postings)
     if n == 0:
@@ -57,7 +63,7 @@ def build_messages(postings: list) -> list[str]:
         ]
 
     header = f"🎯 {n} new internship posting{'s' if n != 1 else ''}:"
-    blocks = [header, *[_format_posting(p) for p in postings]]
+    blocks = [header, *[_format_posting(p, annotations) for p in postings]]
     return _pack(blocks, TELEGRAM_LIMIT)
 
 

@@ -5,26 +5,33 @@ postings matching your filters, and pushes them to Telegram. It only ever
 notifies about postings it has never seen before.
 
 **It does not apply to anything.** Detection and notification only — no
-auto-apply, no resume generation, no LLM calls, no browser automation. All data
-comes from public ATS JSON APIs (no auth, no HTML scraping).
+auto-apply, no resume generation, no browser automation. All job data comes from
+public ATS JSON APIs (no auth, no HTML scraping).
 
 Supported ATS platforms: **Greenhouse**, **Lever**, **Ashby**.
+
+An optional **resume-matching** stage scores each new posting for semantic
+relevance to your résumé (via the free Hugging Face sentence-similarity API) and
+notifies you only about roles that actually fit — a hybrid of keyword filters +
+embeddings. It's off unless configured, and degrades gracefully to "notify all"
+if the API token or résumé is missing.
 
 ---
 
 ## How it works
 
 ```
-config.yaml ──▶ sources.py ──▶ filters.py ──▶ state.py ──▶ notify.py
- (companies)    (fetch all      (title/loc     (diff vs     (Telegram or
-                 concurrently)   matching)      seen.json)    stdout)
+config.yaml ─▶ sources.py ─▶ filters.py ─▶ state.py ─▶ matcher.py ─▶ notify.py
+ (companies)   (fetch all     (title/loc    (diff vs    (résumé       (Telegram or
+                concurrently)  matching)     seen.json)   relevance)    stdout)
 ```
 
 Each run fetches every company concurrently, normalizes results into one
-`Posting` dataclass, filters to internships, diffs against `seen.json`, and
-sends **one batched Telegram message** listing only the new postings. Posting
-IDs are recorded as "seen" **only after a successful send**, so a failed
-notification (or a transient ATS error) never permanently hides a posting.
+`Posting` dataclass, filters to internships, diffs against `seen.json`,
+optionally scores the new ones against your résumé, and sends **one batched
+Telegram message** listing only the matches. Posting IDs are recorded as "seen"
+**only after a successful send**, so a failed notification (or a transient ATS
+error) never permanently hides a posting.
 
 Each posting gets a stable ID of the form `platform:token:atsID`
 (e.g. `greenhouse:stripe:8031833`) so it is recognized run over run even if its
@@ -85,6 +92,57 @@ the tool is usable before you set up a bot.
 
    `main.py` parses `.env` itself — no `python-dotenv` needed. `.env` is
    git-ignored; never commit it.
+
+---
+
+## Résumé matching (optional)
+
+After keyword filtering and diffing, each **new** posting can be scored for
+semantic relevance to your résumé, so you only get pinged about roles that fit.
+It uses the **free Hugging Face sentence-similarity API** with the
+`sentence-transformers/all-MiniLM-L6-v2` embedding model — no LLM, no per-token
+cost, and the whole batch scores in a single request per run.
+
+**Setup:**
+
+1. Get a free Hugging Face token at
+   [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)
+   (a read token is enough). Add it to `.env`:
+
+   ```
+   HF_API_TOKEN=hf_your_token_here
+   ```
+
+2. Put your résumé text in **`resume.txt`** (plain text) in the repo root. Both
+   `resume.txt` and `*.pdf` are git-ignored — your résumé never enters the
+   (public) repo. In GitHub Actions it comes from the `RESUME_TEXT` secret.
+
+3. Configure the `matching:` block in `config.yaml`:
+
+   ```yaml
+   matching:
+     enabled: true
+     provider: huggingface
+     model: sentence-transformers/all-MiniLM-L6-v2
+     threshold: 0.30       # keep postings scoring >= this (cosine similarity 0-1)
+     max_to_score: 20      # cap postings scored per run
+   ```
+
+**Tuning the threshold:** run `python main.py --dry-run`. When matching is
+configured, dry-run prints each posting's relevance score (sorted, with a ✓ on
+the ones that would notify) so you can pick a `threshold`. `all-MiniLM`
+résumé-vs-JD scores typically land in the **0.2–0.5** range; start at `0.30` and
+adjust.
+
+**Graceful fallback:** if `HF_API_TOKEN` or the résumé is missing, or
+`enabled: false`, matching turns off and the monitor notifies about **all** new
+postings (keyword-filtered only). Postings scored below threshold are recorded
+as seen, so they're never re-scored — only genuinely-new postings cost an API
+call. Notifications show the score, e.g. `(relevance 0.42)`.
+
+**Want a natural-language "why it matches" instead of a score?** The matcher
+sits behind a small `Matcher` interface in `matcher.py` — add an LLM-backed
+implementation and register it in `build_matcher()`; nothing else changes.
 
 ---
 
@@ -172,8 +230,11 @@ workflow**), then commits the updated `seen.json` back to the repo with a
 Setup:
 
 1. Push this repo to GitHub.
-2. Add two repository **secrets** (Settings → Secrets and variables → Actions):
-   `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`.
+2. Add repository **secrets** (Settings → Secrets and variables → Actions):
+   - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` — required for notifications.
+   - `HF_API_TOKEN`, `RESUME_TEXT` — optional, only for résumé matching.
+     `RESUME_TEXT` holds your résumé text (since `resume.txt` is git-ignored and
+     not in the repo).
 3. The workflow already has `permissions: contents: write` so it can push
    `seen.json`. If pushes are rejected, enable **Settings → Actions → General →
    Workflow permissions → Read and write permissions**.
@@ -200,19 +261,21 @@ Setup:
 python -m unittest -v test_monitor
 ```
 
-Covers the filtering and state logic. The network layer is intentionally not
-unit-tested — exercise it with `python main.py --dry-run`.
+Covers the filtering, state, and matcher logic (the network layer is stubbed).
+Exercise the live path with `python main.py --dry-run`.
 
 ## Files
 
 | File | Purpose |
 | --- | --- |
-| `config.yaml` | Companies + filters. |
+| `config.yaml` | Companies, filters, and résumé-matching config. |
 | `sources.py` | The three ATS fetchers + normalization into `Posting`. |
 | `filters.py` | Title/location matching. |
 | `state.py` | Load/save/diff `seen.json`. |
+| `matcher.py` | `Matcher` interface + Hugging Face résumé-relevance scoring. |
 | `notify.py` | `Notifier` interface, Telegram sender, `.env` parsing, batching. |
 | `main.py` | Orchestration + CLI. |
 | `seen.json` | Seen-ID state (committed). |
-| `test_monitor.py` | Unit tests for filters + state. |
+| `resume.txt` | Your résumé text (git-ignored; `RESUME_TEXT` secret in CI). |
+| `test_monitor.py` | Unit tests for filters, state, and matcher. |
 | `.github/workflows/poll.yml` | Scheduled GitHub Actions runner. |

@@ -35,3 +35,17 @@ filters:
   location_include: []
   # ...and must contain none of these.
   location_exclude: []
+
+# Resume matching (optional second stage). After keyword filtering and diffing,
+# each genuinely-new posting's description is scored for semantic relevance to
+# your resume; only postings scoring >= `threshold` are sent to Telegram.
+#
+# Uses the free Hugging Face sentence-similarity API (no LLM, no per-token cost).
+# Needs HF_API_TOKEN in the environment and a resume (resume.txt / RESUME_TEXT).
+# If either is missing, matching turns off and ALL new postings are notified.
+matching:
+  enabled: true
+  provider: huggingface
+  model: sentence-transformers/all-MiniLM-L6-v2
+  threshold: 0.30        # cosine similarity 0-1; raise to be pickier, lower for more
+  max_to_score: 20       # cap postings scored per run (cost/rate-limit guard)
