@@ -10,11 +10,12 @@ public ATS JSON APIs (no auth, no HTML scraping).
 
 Supported ATS platforms: **Greenhouse**, **Lever**, **Ashby**.
 
-An optional **resume-matching** stage scores each new posting for semantic
-relevance to your résumé (via the free Hugging Face sentence-similarity API) and
-notifies you only about roles that actually fit — a hybrid of keyword filters +
-embeddings. It's off unless configured, and degrades gracefully to "notify all"
-if the API token or résumé is missing.
+Targeting is done by **keyword filters** on the job title (tuned here for a
+software-engineering / backend profile). An optional **résumé-matching** stage
+(free Hugging Face embeddings) can score each posting for semantic relevance too,
+but it ships **disabled** — on these already-filtered software roles the free
+model was too coarse to rank reliably. It's a drop-in hybrid if you want it later
+(see *Résumé matching* below).
 
 ---
 
@@ -95,13 +96,19 @@ the tool is usable before you set up a bot.
 
 ---
 
-## Résumé matching (optional)
+## Résumé matching (optional, disabled by default)
 
-After keyword filtering and diffing, each **new** posting can be scored for
-semantic relevance to your résumé, so you only get pinged about roles that fit.
-It uses the **free Hugging Face sentence-similarity API** with the
-`sentence-transformers/all-MiniLM-L6-v2` embedding model — no LLM, no per-token
-cost, and the whole batch scores in a single request per run.
+> **Disabled by default** (`matching.enabled: false`). On job listings already
+> narrowed to software roles by the title filters, the free embedding model was
+> too coarse to rank reliably (it scored Product Manager above Software Engineer),
+> so keyword filters do the targeting. Enable this only if you want a soft
+> relevance signal or broaden your filters. The plumbing below is a drop-in.
+
+When enabled, after keyword filtering and diffing, each **new** posting is scored
+for semantic relevance to your résumé so you only get pinged about roles that fit.
+It uses the **free Hugging Face sentence-similarity API** (Inference Providers
+router) with the `sentence-transformers/all-MiniLM-L6-v2` embedding model — no
+LLM, no per-token cost, and the whole batch scores in a single request per run.
 
 **Setup:**
 

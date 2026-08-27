@@ -4,10 +4,11 @@ Given your resume and a batch of postings, produce a relevance score in [0, 1]
 for each so the monitor can notify you only about roles that actually fit your
 background — not every internship that passes the keyword filters.
 
-Default provider: the Hugging Face **sentence-similarity** inference API with a
-free sentence-embedding model (`sentence-transformers/all-MiniLM-L6-v2`). It
-embeds your resume and each job description and returns cosine similarity — no
-LLM, no per-token cost, and the whole batch scores in a single HTTP request.
+Default provider: the Hugging Face **sentence-similarity** pipeline (via the
+Inference Providers router, `router.huggingface.co/hf-inference`) with a free
+sentence-embedding model (`sentence-transformers/all-MiniLM-L6-v2`). It embeds
+your resume and each job description and returns cosine similarity — no LLM, no
+per-token cost, and the whole batch scores in a single HTTP request.
 
 Everything sits behind the small `Matcher` interface, so a different backend
 (a hosted LLM that also explains *why* it matched, a local model, ...) can be
@@ -94,7 +95,12 @@ class HuggingFaceMatcher:
         self.token = token
         self.model = model
         self.threshold = threshold
-        self.url = f"https://api-inference.huggingface.co/models/{model}"
+        # HF's current Inference Providers router. The legacy
+        # api-inference.huggingface.co host is retired.
+        self.url = (
+            f"https://router.huggingface.co/hf-inference/models/{model}"
+            f"/pipeline/sentence-similarity"
+        )
 
     def score_batch(self, resume: str, postings: list[Posting]) -> list[MatchResult]:
         if not postings:
@@ -125,10 +131,7 @@ class HuggingFaceMatcher:
             "Authorization": f"Bearer {self.token}",
             "Content-Type": "application/json",
         }
-        payload = {
-            "inputs": {"source_sentence": source, "sentences": sentences},
-            "options": {"wait_for_model": True},
-        }
+        payload = {"inputs": {"source_sentence": source, "sentences": sentences}}
         last_exc: Optional[Exception] = None
         for attempt in (1, 2):
             try:

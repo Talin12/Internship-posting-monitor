@@ -27,24 +27,58 @@ companies:
 # Filtering is applied to every posting before it is diffed against seen state.
 # A posting must pass BOTH the title rules and the location rules to notify.
 filters:
-  # Title must contain at least one of these substrings (case-insensitive).
+  # Title must contain at least one of these (whole-word, case-insensitive).
   title_include: ["intern", "internship", "co-op", "new grad"]
-  # ...and must contain none of these.
-  title_exclude: ["senior", "staff", "principal", "manager", "director"]
+  # ...and must contain none of these. Tuned for a software-engineering /
+  # backend / full-stack profile: drops seniority plus non-software roles
+  # (product, research/PhD, hardware, and non-tech functions) that otherwise
+  # slip through as "... Intern". Data roles are intentionally NOT excluded.
+  title_exclude:
+    - senior
+    - staff
+    - principal
+    - manager          # also catches "Product Manager", "Program Manager"
+    - director
+    - lead
+    - "product management"
+    - "product marketing"
+    - "research scientist"
+    - phd
+    - hardware
+    - mechanical
+    - electrical
+    - firmware
+    - marketing
+    - sales
+    - recruiting
+    - recruiter
+    - legal
+    - counsel
+    - accountant
+    - designer
+    - "product design"
+    - clinical
+    - "go-to-market"
+    - "account executive"
   # Location must contain at least one of these. Empty list = match any location.
   location_include: []
   # ...and must contain none of these.
   location_exclude: []
 
-# Resume matching (optional second stage). After keyword filtering and diffing,
-# each genuinely-new posting's description is scored for semantic relevance to
-# your resume; only postings scoring >= `threshold` are sent to Telegram.
+# Resume matching (optional second stage) — currently DISABLED.
 #
-# Uses the free Hugging Face sentence-similarity API (no LLM, no per-token cost).
-# Needs HF_API_TOKEN in the environment and a resume (resume.txt / RESUME_TEXT).
-# If either is missing, matching turns off and ALL new postings are notified.
+# When enabled, each new posting's description is scored for semantic relevance
+# to your resume via the free Hugging Face sentence-similarity API, and only
+# postings scoring >= `threshold` are sent to Telegram. In testing, the free
+# embedding model was too coarse to reliably rank software roles after keyword
+# filtering (it ranked Product Manager above Software Engineer), so matching is
+# off and targeting is handled by the sharpened title filters above.
+#
+# To re-enable the hybrid: set enabled: true, provide HF_API_TOKEN + a resume
+# (resume.txt / RESUME_TEXT), and calibrate `threshold` with `--dry-run` (which
+# prints per-posting scores). See the README "Résumé matching" section.
 matching:
-  enabled: true
+  enabled: false
   provider: huggingface
   model: sentence-transformers/all-MiniLM-L6-v2
   threshold: 0.30        # cosine similarity 0-1; raise to be pickier, lower for more
