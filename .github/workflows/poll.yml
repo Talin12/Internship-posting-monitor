@@ -1,0 +1,50 @@
+name: poll-job-boards
+
+# Runs every 30 minutes, plus a manual "Run workflow" button.
+# NOTE: GitHub disables scheduled workflows after 60 days of repo inactivity.
+# Push any commit (or click "Run workflow") to re-enable the schedule.
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+# Allow the job to push the updated seen.json back to the repo.
+permissions:
+  contents: write
+
+concurrency:
+  group: poll-job-boards
+  cancel-in-progress: false
+
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run monitor
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python main.py
+
+      - name: Commit updated state
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet -- seen.json; then
+            echo "seen.json unchanged; nothing to commit."
+            exit 0
+          fi
+          git add seen.json
+          git commit -m "chore: update seen.json [skip ci]"
+          git push

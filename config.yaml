@@ -1,0 +1,37 @@
+# Companies to monitor and the filters applied to their postings.
+#
+# Each company needs a `platform` (greenhouse | lever | ashby) and the ATS
+# `token` for that platform. See the README for how to find a company's token.
+# The tokens below were verified live against each ATS during development.
+
+companies:
+  - name: Stripe
+    platform: greenhouse
+    token: stripe
+  - name: Coinbase
+    platform: greenhouse
+    token: coinbase
+  - name: Databricks
+    platform: greenhouse
+    token: databricks
+  - name: Palantir
+    platform: lever
+    token: palantir
+  - name: Ramp
+    platform: ashby
+    token: ramp
+  - name: Notion
+    platform: ashby
+    token: notion
+
+# Filtering is applied to every posting before it is diffed against seen state.
+# A posting must pass BOTH the title rules and the location rules to notify.
+filters:
+  # Title must contain at least one of these substrings (case-insensitive).
+  title_include: ["intern", "internship", "co-op", "new grad"]
+  # ...and must contain none of these.
+  title_exclude: ["senior", "staff", "principal", "manager", "director"]
+  # Location must contain at least one of these. Empty list = match any location.
+  location_include: []
+  # ...and must contain none of these.
+  location_exclude: []
