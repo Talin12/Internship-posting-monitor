@@ -25,7 +25,10 @@ import requests
 log = logging.getLogger("jobmon.notify")
 
 TELEGRAM_LIMIT = 4096  # hard API limit per message
-SUMMARY_THRESHOLD = 25  # more than this in one run -> summary instead of full list
+SUMMARY_THRESHOLD = 100  # more than this in one run -> summary instead of full list
+# (raised from 25: a legitimate first run / recruiting-season surge across several
+# ATS boards can easily exceed 25 real intern postings; 100 still catches a true
+# ATS-format glitch that would otherwise dump hundreds of "new" rows as spam.)
 REQUEST_TIMEOUT = 15
 
 
