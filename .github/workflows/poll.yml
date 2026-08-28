@@ -1,11 +1,20 @@
 name: poll-job-boards
 
-# Runs every 30 minutes, plus a manual "Run workflow" button.
-# NOTE: GitHub disables scheduled workflows after 60 days of repo inactivity.
-# Push any commit (or click "Run workflow") to re-enable the schedule.
+# Runs 4×/hour, plus a manual "Run workflow" button.
+#
+# Cron minutes are deliberately OFF the top/half hour. GitHub Actions runs every
+# repo's schedule on shared infrastructure and, under load, silently drops runs
+# queued at popular minutes (:00, :15, :30, :45). Odd offsets (:07/:22/:37/:52)
+# are far less contended, so more of these actually fire — and polling 4×/hour
+# means a dropped run is at most a ~15-min gap, not the 12-hour gap we saw on
+# "*/30". Scheduled runs are still best-effort and can be delayed several minutes.
+#
+# NOTE: GitHub disables scheduled workflows after 60 days of repo inactivity, but
+# every run commits an updated seen.json (last_run changes), which keeps the repo
+# active and the schedule alive.
 on:
   schedule:
-    - cron: "*/30 * * * *"
+    - cron: "7,22,37,52 * * * *"
   workflow_dispatch:
 
 # Allow the job to push the updated seen.json back to the repo.
