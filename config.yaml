@@ -28,12 +28,18 @@ companies:
 # A posting must pass BOTH the title rules and the location rules to notify.
 filters:
   # Title must contain at least one of these (whole-word, case-insensitive).
-  title_include: ["intern", "internship", "co-op", "new grad"]
+  # Internships only — "new grad"/"new graduate" are full-time and intentionally
+  # NOT included (and are excluded below to drop hybrid "Intern / New Grad" posts).
+  title_include: ["intern", "internship", "co-op"]
   # ...and must contain none of these. Tuned for a software-engineering /
   # backend / full-stack profile: drops seniority plus non-software roles
   # (product, research/PhD, hardware, and non-tech functions) that otherwise
   # slip through as "... Intern". Data roles are intentionally NOT excluded.
   title_exclude:
+    - "new grad"          # full-time; drops "SWE, New Grad" and "Intern / New Grad"
+    - "new graduate"
+    - "full-time"
+    - "full time"
     - senior
     - staff
     - principal
