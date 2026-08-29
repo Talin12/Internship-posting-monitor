@@ -49,7 +49,25 @@ filters:
     - "product management"
     - "product marketing"
     - "research scientist"
+    - research            # drops ML/AI/applied-research intern roles
     - phd
+    # Specialisations off a backend / full-stack Python profile (added to keep
+    # the list "me-specific" without an LLM matcher). Data-engineering titles are
+    # left in; only data *science* and the specialisations below are dropped.
+    - strategist          # "Deployment Strategist" — consulting, not software
+    - privacy
+    - "civil liberties"
+    - security
+    - cybersecurity
+    - cryptography
+    - "machine learning"
+    - "artificial intelligence"
+    - "data science"
+    - "data scientist"
+    - embedded
+    - mobile
+    - ios
+    - android
     - hardware
     - mechanical
     - electrical
@@ -84,7 +102,10 @@ filters:
 # (resume.txt / RESUME_TEXT), and calibrate `threshold` with `--dry-run` (which
 # prints per-posting scores). See the README "Résumé matching" section.
 matching:
-  enabled: true
+  enabled: false               # off: no API key (Claude Pro ≠ API access). Targeting
+                               # is handled by the specialisation title-excludes above.
+                               # Flip to true once ANTHROPIC_API_KEY is set to get
+                               # per-posting résumé fit scoring (see AnthropicMatcher).
   provider: anthropic          # anthropic (Claude) | huggingface (embeddings)
   model: claude-haiku-4-5      # cheap/fast; judges role fit, not just keywords
   threshold: 0.60              # 0-1 fit score; raise to be pickier, lower for more
