@@ -84,8 +84,11 @@ filters:
 # (resume.txt / RESUME_TEXT), and calibrate `threshold` with `--dry-run` (which
 # prints per-posting scores). See the README "Résumé matching" section.
 matching:
-  enabled: false
-  provider: huggingface
-  model: sentence-transformers/all-MiniLM-L6-v2
-  threshold: 0.30        # cosine similarity 0-1; raise to be pickier, lower for more
-  max_to_score: 20       # cap postings scored per run (cost/rate-limit guard)
+  enabled: true
+  provider: anthropic          # anthropic (Claude) | huggingface (embeddings)
+  model: claude-haiku-4-5      # cheap/fast; judges role fit, not just keywords
+  threshold: 0.60              # 0-1 fit score; raise to be pickier, lower for more
+  max_to_score: 40             # cap postings scored per run (cost guard)
+  # Needs ANTHROPIC_API_KEY in the environment (a repo secret in CI). If it's
+  # unset, main.py logs a warning and falls back to notifying every new posting,
+  # so a missing key degrades to keyword-only rather than going silent.

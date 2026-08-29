@@ -44,8 +44,9 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          # Resume matching (optional). If either secret is unset, the monitor
-          # falls back to notifying about every new posting.
+          # Resume matching. ANTHROPIC_API_KEY drives the active Claude matcher;
+          # if it's unset the monitor falls back to notifying every new posting.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           HF_API_TOKEN: ${{ secrets.HF_API_TOKEN }}
           RESUME_TEXT: ${{ secrets.RESUME_TEXT }}
         run: python main.py
