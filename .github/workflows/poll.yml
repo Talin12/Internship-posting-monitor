@@ -1,20 +1,20 @@
 name: poll-job-boards
 
-# Runs 4×/hour, plus a manual "Run workflow" button.
+# WHY THIS IS A LOOP, NOT A PLAIN CRON:
+# GitHub's scheduled workflows are best-effort on free/shared infra — under load
+# it silently drops most runs, so a "*/15" cron in practice fired only ~twice a
+# day here (6–12h gaps). Since this repo is PUBLIC (unlimited Actions minutes),
+# we instead let a single run stay alive and poll every POLL_INTERVAL for almost
+# 6 hours (the job cap). The schedule's only job is to (re)start the loop, so it
+# just has to succeed occasionally, not every 15 minutes.
 #
-# Cron minutes are deliberately OFF the top/half hour. GitHub Actions runs every
-# repo's schedule on shared infrastructure and, under load, silently drops runs
-# queued at popular minutes (:00, :15, :30, :45). Odd offsets (:07/:22/:37/:52)
-# are far less contended, so more of these actually fire — and polling 4×/hour
-# means a dropped run is at most a ~15-min gap, not the 12-hour gap we saw on
-# "*/30". Scheduled runs are still best-effort and can be delayed several minutes.
-#
-# NOTE: GitHub disables scheduled workflows after 60 days of repo inactivity, but
-# every run commits an updated seen.json (last_run changes), which keeps the repo
-# active and the schedule alive.
+# concurrency (below) keeps exactly one loop running: while a run is active, any
+# scheduled/dispatch trigger queues a single successor that starts the moment the
+# active one exits — so the ~6h runs chain into near-continuous polling. The cron
+# is frequent so that successor is essentially always queued.
 on:
   schedule:
-    - cron: "7,22,37,52 * * * *"
+    - cron: "7,22,37,52 * * * *"   # frequent = a successor is always queued to take over
   workflow_dispatch:
 
 # Allow the job to push the updated seen.json back to the repo.
@@ -23,11 +23,12 @@ permissions:
 
 concurrency:
   group: poll-job-boards
-  cancel-in-progress: false
+  cancel-in-progress: false        # never kill the active loop; queue the next one
 
 jobs:
   poll:
     runs-on: ubuntu-latest
+    timeout-minutes: 350           # ~5h50m — under GitHub's 6h hard job cap
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -40,7 +41,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run monitor
+      - name: Poll in a loop until near the job cap
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -49,16 +50,35 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           HF_API_TOKEN: ${{ secrets.HF_API_TOKEN }}
           RESUME_TEXT: ${{ secrets.RESUME_TEXT }}
-        run: python main.py
-
-      - name: Commit updated state
+          POLL_INTERVAL: "900"       # seconds between polls (15 min)
         run: |
+          set +e
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          if git diff --quiet -- seen.json; then
-            echo "seen.json unchanged; nothing to commit."
-            exit 0
-          fi
-          git add seen.json
-          git commit -m "chore: update seen.json [skip ci]"
-          git push
+
+          # Exit the loop ~5h45m in, leaving margin before the 350-min timeout so
+          # the final state push always completes and the queued successor starts.
+          deadline=$(( $(date +%s) + 20700 ))
+
+          push_state() {
+            git diff --quiet -- seen.json && return 0
+            git add seen.json
+            git commit -m "chore: update seen.json [skip ci]" || return 0
+            git push || { git pull --rebase --autostash origin main && git push; }
+          }
+
+          while : ; do
+            out="$(python main.py 2>&1)"
+            echo "$out"
+            # Persist immediately after a real notification so a mid-loop job kill
+            # can never re-notify the same postings. Otherwise defer to the final
+            # push below to keep commit history quiet ("No new postings" runs).
+            echo "$out" | grep -q "Notified" && push_state
+
+            [ "$(date +%s)" -ge "$deadline" ] && break
+            sleep "$POLL_INTERVAL"
+          done
+
+          # Always persist the latest state (last_run / last_error / any new ids)
+          # before handing off to the next run in the chain.
+          push_state
