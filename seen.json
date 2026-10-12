@@ -79,8 +79,9 @@
 "greenhouse:databricks:7640764002",
 "greenhouse:databricks:6866531002",
 "greenhouse:databricks:8847738002",
-"greenhouse:coinbase:8175510"
+"greenhouse:coinbase:8175510",
+"greenhouse:databricks:6865687002"
 ],
-"last_run": "2026-10-12T07:58:18.604497+00:00",
+"last_run": "2026-10-12T16:46:16.345093+00:00",
 "last_error": null
 }
