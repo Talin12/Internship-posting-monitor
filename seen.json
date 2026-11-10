@@ -89,8 +89,11 @@
 "lever:palantir:40840cef-bbd7-4557-bb21-cbdcf4be616e",
 "lever:palantir:cd64bcd4-50bb-4aeb-a135-4e0487ffd312",
 "ashby:notion:43ffba97-b64a-4c6a-ac13-c803253c9413",
-"greenhouse:stripe:8357739"
+"greenhouse:stripe:8357739",
+"lever:palantir:130ee501-bd22-4d44-b651-39581ef97743",
+"lever:palantir:eb496d6a-a960-43d3-a09b-e3843052f54e",
+"lever:palantir:45e4617d-d658-4b30-8dc9-378ca84a027a"
 ],
-"last_run": "2026-11-10T09:30:25.258864+00:00",
+"last_run": "2026-11-10T16:50:30.199056+00:00",
 "last_error": ""
 }
